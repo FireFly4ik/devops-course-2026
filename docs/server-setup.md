@@ -102,7 +102,84 @@ UFW active; default deny incoming, allow outgoing; logging medium.
 
 Снимки создавались на выключенной VM. UFW и FQDN настроены после третьего снимка.
 
-## 8. Восстановление из 01-clean-install за 10 минут
+## 8. Веб-сервер
+
+Ubuntu-пакеты: nginx и rsync. Nginx 1.24.0; служба включена в автозагрузку.
+Конфигурация: /etc/nginx/sites-available/devops-site, активная ссылка
+/etc/nginx/sites-enabled/devops-site. Ссылка sites-enabled/default удалена;
+исходный sites-available/default сохранён.
+
+Каталог /var/www/devops-site принадлежит devops:devops. Каталоги 755,
+файлы 644. Главный процесс Nginx — root, рабочие — www-data.
+www-data читает файлы, но не может изменять их или создавать новые.
+
+Сертификат /etc/ssl/certs/devops.crt: root:root, 644.
+Закрытый ключ /etc/ssl/private/devops.key: root:root, 600;
+ключ остаётся только на сервере и не включается в Git.
+Срок действия сертификата — 365 дней, SAN DNS:devops.local.
+Команда создания:
+
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/devops.key \
+  -out /etc/ssl/certs/devops.crt \
+  -subj "/CN=devops.local" \
+  -addext "subjectAltName=DNS:devops.local"
+sudo chmod 600 /etc/ssl/private/devops.key
+sudo chmod 644 /etc/ssl/certs/devops.crt
+```
+
+Конфигурация ресурса:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name devops.local;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name devops.local;
+    ssl_certificate /etc/ssl/certs/devops.crt;
+    ssl_certificate_key /etc/ssl/private/devops.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root /var/www/devops-site;
+    index index.html;
+    location / { try_files $uri $uri/ =404; }
+    error_page 404 /404.html;
+    access_log /var/log/nginx/devops-site.access.log;
+    error_log /var/log/nginx/devops-site.error.log;
+}
+```
+
+После изменения: sudo nginx -t, затем sudo systemctl reload nginx.
+HTTP перенаправляется кодом 301 на HTTPS. HSTS не добавляется.
+Открыты 80 и 443 в UFW. Снимок 04-nginx-https создан после проверки TLS.
+В блоке перенаправления используется общий access.log; отдельный журнал
+/var/log/nginx/devops-site.access.log относится к HTTPS-блоку.
+Журнал ошибок: /var/log/nginx/devops-site.error.log.
+
+На Mac открытый сертификат получен по доверенному SSH-каналу в ~/devops.crt.
+Проверка без отключения TLS: curl --cacert ~/devops.crt -I https://devops.local.
+Обычный curl отклоняет самоподписанный сертификат с кодом 60.
+
+Содержимое хранится в site/. Доставка: scripts/deploy.sh; сначала
+scripts/deploy.sh --dry-run. Скрипт работает из подкаталога репозитория,
+не допускает незакоммиченных изменений и отсутствующего index.html,
+использует одно SSH-соединение rsync с BatchMode=yes, затем curl -f с --cacert.
+Для openrsync macOS использована эквивалентная символьная запись прав
+--chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r (755/644).
+REMOTE, SITE_URL и CA_CERT можно переопределить окружением.
+
+Аудит дополнен четырьмя проверками Nginx, синтаксиса, срока сертификата и прав.
+Штатный запуск: sudo bash scripts/audit.sh — 10 OK, exit 0.
+Негативная проверка срока: sudo bash scripts/audit.sh 400 — exit 1.
+При правах 666 на index.html аудит также возвращает 1.
+После опытов содержимое и права восстановлены штатным деплоем.
+
+## 9. Восстановление из 01-clean-install за 10 минут
 
 На Mac выключить VM, восстановить снимок, вернуть исходный проброс и запустить:
 
@@ -199,7 +276,7 @@ ssh -i ~/.ssh/devops_vm -p 2222 devops@devops.local
 Закрыть исходную сессию только после проверки нового входа.
 При потере SSH использовать консоль VirtualBox или откат на снимок.
 
-## 9. Проверка audit.sh
+## 10. Проверка audit.sh
 
 В рабочей конфигурации: 6 OK, 0 FAIL, exit 0.
 При временном `MaxAuthTries 10`: 5 OK, 1 FAIL, exit 1.
