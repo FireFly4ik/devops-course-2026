@@ -44,7 +44,7 @@ printf '[4] Веб-сервер\n'
 check 'Служба Nginx активна' 'active' "$(systemctl is-active nginx)"
 sudo nginx -t >/dev/null 2>&1
 check 'Конфигурация Nginx корректна' '0' "$?"
-cert_min_days="${CERT_MIN_DAYS:-30}"
+cert_min_days="${1:-${CERT_MIN_DAYS:-30}}"
 if [[ ! "$cert_min_days" =~ ^[0-9]+$ ]] || (( cert_min_days > 36500 )); then
     printf 'CERT_MIN_DAYS должен быть целым числом от 0 до 36500.\n' >&2
     exit 1
