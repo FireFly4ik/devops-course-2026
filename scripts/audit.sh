@@ -40,5 +40,24 @@ check 'Входящие соединения по умолчанию запре�
 
 printf '[3] Учётные записи\n'
 awk -F: '$3 >= 1000 && $3 < 65534 {printf "    %s (uid=%s)\n", $1, $3}' /etc/passwd
+printf '[4] Веб-сервер\n'
+check 'Служба Nginx активна' 'active' "$(systemctl is-active nginx)"
+sudo nginx -t >/dev/null 2>&1
+check 'Конфигурация Nginx корректна' '0' "$?"
+cert_min_days="${1:-${CERT_MIN_DAYS:-30}}"
+if [[ ! "$cert_min_days" =~ ^[0-9]+$ ]] || (( cert_min_days > 36500 )); then
+    printf 'CERT_MIN_DAYS должен быть целым числом от 0 до 36500.\n' >&2
+    exit 1
+fi
+openssl x509 -in /etc/ssl/certs/devops.crt -noout -checkend "$((cert_min_days * 86400))" >/dev/null 2>&1
+check "Сертификат действует минимум ${cert_min_days} дней" '0' "$?"
+unsafe_files="$(find /var/www/devops-site -perm -o+w -print 2>&1)"
+find_status=$?
+key_mode="$(sudo stat -c '%a' /etc/ssl/private/devops.key 2>/dev/null)"
+permissions_ok=no
+if [[ "$find_status" -eq 0 && -z "$unsafe_files" && "$key_mode" == 600 ]]; then
+    permissions_ok=yes
+fi
+check 'Нет записи для всех и ключ имеет права 600' 'yes' "$permissions_ok"
 printf 'Пройдено: %s, не пройдено: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
