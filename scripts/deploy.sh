@@ -26,7 +26,7 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]]; the
     echo 'Ошибка: есть незафиксированные изменения; доставка отменена.' >&2
     exit 1
 fi
-if ! rsync -avz --delete --chmod=D755,F644 "$@" \
+if ! rsync -avz --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r "$@" \
     -e 'ssh -o BatchMode=yes -o ConnectTimeout=5' \
     "$LOCAL_DIR" "${REMOTE}:${REMOTE_DIR}/"; then
     echo 'Ошибка синхронизации.' >&2
