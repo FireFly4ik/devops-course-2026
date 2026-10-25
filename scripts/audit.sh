@@ -59,5 +59,19 @@ if [[ "$find_status" -eq 0 && -z "$unsafe_files" && "$key_mode" == 600 ]]; then
     permissions_ok=yes
 fi
 check 'Нет записи для всех и ключ имеет права 600' 'yes' "$permissions_ok"
+printf '[5] Контейнеризация\n'
+check 'Служба Docker активна' 'active' "$(systemctl is-active docker)"
+check 'СУБД находится в состоянии healthy' 'healthy' "$(sudo docker inspect -f '{{.State.Health.Status}}' app-db-1 2>/dev/null)"
+listeners="$(ss -H -tln 2>/dev/null)"
+listeners_status=$?
+ports_ok=no
+if [[ "$listeners_status" -eq 0 ]]; then
+    unsafe_listeners="$(awk '$4 ~ /:(5000|5432)$/ && $4 !~ /^127[.]0[.]0[.]1:(5000|5432)$/ {print $4}' <<< "$listeners")"
+    if [[ -z "$unsafe_listeners" ]]; then
+        ports_ok=yes
+    fi
+fi
+check 'Порты 5000 и 5432 не опубликованы за пределами loopback' 'yes' "$ports_ok"
+check 'Файл окружения имеет права 600' '600' "$(sudo stat -c '%a' /home/devops/app/.env 2>/dev/null)"
 printf 'Пройдено: %s, не пройдено: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1

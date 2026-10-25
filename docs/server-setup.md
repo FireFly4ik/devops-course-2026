@@ -179,7 +179,94 @@ REMOTE, SITE_URL и CA_CERT можно переопределить окруже
 При правах 666 на index.html аудит также возвращает 1.
 После опытов содержимое и права восстановлены штатным деплоем.
 
-## 9. Восстановление из 01-clean-install за 10 минут
+## 9. Контейнеризация
+
+Docker Engine Community установлен из официального APT-репозитория
+https://download.docker.com/linux/ubuntu для Ubuntu noble/arm64.
+Установлены docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin,
+docker-compose-plugin. Пакет docker.io не используется.
+Версия Engine: 29.9.2. В группу docker включён devops, уже имеющий sudo.
+После изменения группы требуется новая сессия или newgrp docker.
+
+Проект расположен в /home/devops/app. Исходники хранятся в app/ репозитория.
+Доставка с Mac из корня репозитория:
+
+```bash
+rsync -avz --delete --exclude=.env --dry-run app/ devops:app/
+rsync -avz --delete --exclude=.env app/ devops:app/
+```
+
+.env создаётся только на сервере, принадлежит devops:docker, права 600.
+Он исключён из Git и контекста сборки. --exclude=.env сохраняет его при rsync
+с --delete. Пароль не копируется на Mac и не включается в отчёт.
+Первичная настройка внутри VM:
+
+```bash
+cd /home/devops/app
+umask 077
+cp .env.example .env
+chmod 600 .env
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
+docker compose up -d --build
+docker compose ps
+```
+
+Приложение devops-app:1.0 использует Python 3.12, Flask, gunicorn
+и psycopg2-binary; запускается пользователем app, а не root.
+Для app.py и requirements.txt владелец root и права 644.
+Сначала копируется requirements.txt и устанавливаются зависимости, затем app.py:
+изменение текста ответа сохраняет кэш установки зависимостей.
+
+PostgreSQL postgres:16-alpine хранит данные в именованном томе app_db_data
+(/var/lib/postgresql/data). Пользовательская bridge-сеть app_backend
+разрешает имя db через DNS Docker. DB_HOST=db, имя базы и пользователя app.
+Порт 5432 не публикуется. Приложение публикуется только на
+127.0.0.1:5000:5000. В depends_on используется service_healthy
+и pg_isready; interval 5s, timeout 3s, retries 5.
+
+В HTTPS-блок /etc/nginx/sites-available/devops-site добавлено:
+
+```nginx
+location /app/ {
+    proxy_pass http://127.0.0.1:5000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Завершающий / в proxy_pass удаляет префикс /app/ при передаче запроса.
+Статический location /, сертификат и перенаправление HTTP сохранены.
+После проверки sudo nginx -t выполнить sudo systemctl reload nginx.
+Проверка с Mac:
+
+```bash
+curl --cacert ~/devops.crt https://devops.local/app/
+curl --cacert ~/devops.crt https://devops.local/app/health
+curl --cacert ~/devops.crt -I https://devops.local/
+```
+
+docker compose down сохраняет том и счётчик. down -v удаляет данные —
+используется только для явно разрешённого опыта на учебном томе.
+Для штатного перезапуска применять docker compose up -d.
+При 502 проверить docker compose ps, docker compose logs app,
+curl http://127.0.0.1:5000/health и журнал devops-site.error.log.
+Конфигурация с публикацией 0.0.0.0 небезопасна: правила Docker обходят UFW.
+
+Аудит содержит раздел [5]: Docker active, app-db-1 healthy, отсутствие
+слушающих 5000/5432 за пределами 127.0.0.1, .env mode 600.
+Запуск sudo bash /home/devops/audit.sh. Рабочий итог — 14 OK, код 0.
+Снимок 05-docker-compose сохраняет проект для контрольной №2.
+Не удалять проект, итоговый том и снимки после сдачи.
+
+Для проверки HTTPS из консоли VM в /etc/hosts добавлено
+`192.168.56.101 devops.local`. Используется локальный сертификат
+`/etc/ssl/certs/devops.crt` с параметром curl --cacert.
+Проверка с Mac выполнена в Chrome: /app/ возвращает персонализированный
+ответ и счётчик, а временный :5001/health возвращал ok без правила UFW.
+
+## 10. Восстановление из 01-clean-install за 10 минут
 
 На Mac выключить VM, восстановить снимок, вернуть исходный проброс и запустить:
 
@@ -276,7 +363,7 @@ ssh -i ~/.ssh/devops_vm -p 2222 devops@devops.local
 Закрыть исходную сессию только после проверки нового входа.
 При потере SSH использовать консоль VirtualBox или откат на снимок.
 
-## 10. Проверка audit.sh
+## 11. Проверка audit.sh
 
 В рабочей конфигурации: 6 OK, 0 FAIL, exit 0.
 При временном `MaxAuthTries 10`: 5 OK, 1 FAIL, exit 1.
