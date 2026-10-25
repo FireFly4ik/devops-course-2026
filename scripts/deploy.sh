@@ -7,12 +7,17 @@ SITE_URL="${SITE_URL:-https://devops.local}"
 CA_CERT="${CA_CERT:-${HOME}/devops.crt}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_DIR="${ROOT}/site/"
-DRY_RUN=()
+DRY_RUN=false
 if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --dry-run ) ]]; then
     echo 'Использование: deploy.sh [--dry-run]' >&2
     exit 1
 fi
-if [[ $# -eq 1 ]]; then DRY_RUN=(--dry-run); fi
+if [[ $# -eq 1 ]]; then
+    DRY_RUN=true
+    set -- --dry-run
+else
+    set --
+fi
 if [[ ! -f "${LOCAL_DIR}index.html" ]]; then
     echo 'Ошибка: site/index.html отсутствует; доставка отменена.' >&2
     exit 1
@@ -21,13 +26,13 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]]; the
     echo 'Ошибка: есть незафиксированные изменения; доставка отменена.' >&2
     exit 1
 fi
-if ! rsync -avz --delete --chmod=D755,F644 "${DRY_RUN[@]}" \
+if ! rsync -avz --delete --chmod=D755,F644 "$@" \
     -e 'ssh -o BatchMode=yes -o ConnectTimeout=5' \
     "$LOCAL_DIR" "${REMOTE}:${REMOTE_DIR}/"; then
     echo 'Ошибка синхронизации.' >&2
     exit 1
 fi
-if [[ ${#DRY_RUN[@]} -gt 0 ]]; then
+if "$DRY_RUN"; then
     echo 'Пробный запуск завершён; сервер не изменён.'
     exit 0
 fi
