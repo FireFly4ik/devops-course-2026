@@ -174,8 +174,8 @@ scripts/deploy.sh --dry-run. Скрипт работает из подкатал
 REMOTE, SITE_URL и CA_CERT можно переопределить окружением.
 
 Аудит дополнен четырьмя проверками Nginx, синтаксиса, срока сертификата и прав.
-Штатный запуск: sudo bash scripts/audit.sh — 10 OK, exit 0.
-Негативная проверка срока: sudo bash scripts/audit.sh 400 — exit 1.
+Штатный запуск: sudo bash scripts/audit.sh --stage web — 10 OK, exit 0.
+Негативная проверка срока: sudo bash scripts/audit.sh --stage web 400 — exit 1.
 При правах 666 на index.html аудит также возвращает 1.
 После опытов содержимое и права восстановлены штатным деплоем.
 
@@ -349,7 +349,7 @@ printf '%s\n' '127.0.1.1 devops-vm.devops.local devops-vm' | sudo tee -a /etc/ho
 hostname -f
 sudo sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|maxauthtries) '
 sudo ufw status verbose
-sudo bash /home/devops/audit.sh
+sudo bash /home/devops/audit.sh --stage ssh
 ```
 
 На Mac, если ещё не сделано, добавить hosts и разрешить Codex/Terminal локальную сеть
@@ -365,7 +365,12 @@ ssh -i ~/.ssh/devops_vm -p 2222 devops@devops.local
 
 ## 11. Проверка audit.sh
 
-В рабочей конфигурации: 6 OK, 0 FAIL, exit 0.
+После восстановления только ПР №5 запускать `audit.sh --stage ssh`:
+6 OK, 0 FAIL, exit 0. Он не требует ещё не установленных Nginx и Docker.
+После ПР №6 запускать `audit.sh --stage web`: 10 OK.
+После ПР №7 запускать `audit.sh` или `audit.sh --stage docker`: 14 OK.
+Для негативной проверки срока сертификата: `audit.sh --stage web 400`.
+Этап выбирается явно; отсутствие требуемой службы не пропускается автоматически.
 При временном `MaxAuthTries 10`: 5 OK, 1 FAIL, exit 1.
 После проверки восстановлено `MaxAuthTries 3`; ослабленная конфигурация
 не применялась к работающей службе.

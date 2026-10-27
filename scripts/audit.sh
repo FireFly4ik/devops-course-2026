@@ -4,6 +4,30 @@ set -uo pipefail
 export LC_ALL=C
 PASS=0
 FAIL=0
+stage=docker
+cert_min_days="${CERT_MIN_DAYS:-30}"
+while (( $# )); do
+    case "$1" in
+        --stage)
+            if (( $# < 2 )); then
+                printf 'Нужно указать этап: ssh, web или docker.\n' >&2
+                exit 1
+            fi
+            stage="$2"
+            shift 2
+            ;;
+        [0-9]*) cert_min_days="$1"; shift ;;
+        *) printf 'Использование: audit.sh [--stage ssh|web|docker] [минимум_дней]\n' >&2; exit 1 ;;
+    esac
+done
+case "$stage" in
+    ssh|web|docker) ;;
+    *) printf 'Неизвестный этап аудита: %s\n' "$stage" >&2; exit 1 ;;
+esac
+if [[ ! "$cert_min_days" =~ ^[0-9]+$ ]] || (( cert_min_days > 36500 )); then
+    printf 'Минимальный срок должен быть целым числом от 0 до 36500.\n' >&2
+    exit 1
+fi
 
 check() {
     local desc="$1" expected="$2" actual="$3"
@@ -40,15 +64,11 @@ check 'Входящие соединения по умолчанию запре�
 
 printf '[3] Учётные записи\n'
 awk -F: '$3 >= 1000 && $3 < 65534 {printf "    %s (uid=%s)\n", $1, $3}' /etc/passwd
+if [[ "$stage" != ssh ]]; then
 printf '[4] Веб-сервер\n'
 check 'Служба Nginx активна' 'active' "$(systemctl is-active nginx)"
 sudo nginx -t >/dev/null 2>&1
 check 'Конфигурация Nginx корректна' '0' "$?"
-cert_min_days="${1:-${CERT_MIN_DAYS:-30}}"
-if [[ ! "$cert_min_days" =~ ^[0-9]+$ ]] || (( cert_min_days > 36500 )); then
-    printf 'CERT_MIN_DAYS должен быть целым числом от 0 до 36500.\n' >&2
-    exit 1
-fi
 openssl x509 -in /etc/ssl/certs/devops.crt -noout -checkend "$((cert_min_days * 86400))" >/dev/null 2>&1
 check "Сертификат действует минимум ${cert_min_days} дней" '0' "$?"
 unsafe_files="$(find /var/www/devops-site -perm -o+w -print 2>&1)"
@@ -59,6 +79,8 @@ if [[ "$find_status" -eq 0 && -z "$unsafe_files" && "$key_mode" == 600 ]]; then
     permissions_ok=yes
 fi
 check 'Нет записи для всех и ключ имеет права 600' 'yes' "$permissions_ok"
+fi
+if [[ "$stage" == docker ]]; then
 printf '[5] Контейнеризация\n'
 check 'Служба Docker активна' 'active' "$(systemctl is-active docker)"
 check 'СУБД находится в состоянии healthy' 'healthy' "$(sudo docker inspect -f '{{.State.Health.Status}}' app-db-1 2>/dev/null)"
@@ -73,5 +95,6 @@ if [[ "$listeners_status" -eq 0 ]]; then
 fi
 check 'Порты 5000 и 5432 не опубликованы за пределами loopback' 'yes' "$ports_ok"
 check 'Файл окружения имеет права 600' '600' "$(sudo stat -c '%a' /home/devops/app/.env 2>/dev/null)"
+fi
 printf 'Пройдено: %s, не пройдено: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
