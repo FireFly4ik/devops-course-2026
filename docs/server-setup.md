@@ -393,3 +393,73 @@ ssh -i ~/.ssh/devops_vm -p 2222 devops@devops.local
 - Контейнер запускается от пользователя `app`.
 
 Загружайте готовый образ по полному SHA коммита. Тег `latest` обновляется при каждой успешной публикации из `main`.
+
+## 13. Воспроизводимое развёртывание Ansible — ПР №11
+
+ПР №11 выполняется с чистого снимка `01-clean-install`. Состояние предыдущих
+работ сохранено снимком `08-before-ansible`. Адрес VM — `192.168.56.101`,
+SSH в этом развёртывании использует **порт 22**, HTTP — **80**; настройки
+порта 2222 и TLS из предыдущих разделов относятся к прежнему снимку.
+Управляющий узел — Mac, управляемый — Ubuntu Server 24.04 ARM64 в VirtualBox.
+
+В каталоге `ansible/` находятся два inventory: `bootstrap.ini` для `student`
+и `prod.ini` для `devops`. Оба используют существующий ключ `~/.ssh/devops_vm`.
+Закрытый ключ и пароли в репозиторий не помещаются. Перед первым подключением
+сверьте отпечаток ключа сервера с консолью VirtualBox; проверка host key включена.
+
+```bash
+cd ansible
+ansible-galaxy collection install -r requirements.yml
+ansible-inventory -i inventory/bootstrap.ini --graph
+ansible-inventory -i inventory/prod.ini --graph
+ansible-playbook --syntax-check site.yml
+ansible-playbook --syntax-check verify.yml
+```
+
+Для bootstrap допускается предварительно установить публичный ключ пользователю
+`student` через `ssh-copy-id`. Пароль sudo вводится интерактивно:
+
+```bash
+ssh-copy-id -i ~/.ssh/devops_vm.pub student@192.168.56.101
+ansible-playbook -i inventory/bootstrap.ini site.yml --ask-become-pass
+ssh -i ~/.ssh/devops_vm devops@192.168.56.101 whoami
+ssh -i ~/.ssh/devops_vm devops@192.168.56.101 sudo -n true
+ansible vm -m ping
+ansible-playbook site.yml
+ansible-playbook verify.yml
+```
+
+Роль `base` проверяет Ubuntu 24.04/aarch64, устанавливает зависимости модулей
+и Docker из официального ARM64-репозитория. `python3-debian` нужен модулю
+`deb822_repository`, `python3-requests` — модулям Docker на управляемом узле.
+Роль `ssh` устанавливает ключ до отключения парольного входа, создаёт
+проверенный `visudo` файл NOPASSWD для автоматизации и включает UFW с разрешением
+22/80. Роль `nginx` включает reverse proxy и убирает default site; обработчики
+сначала выполняют `nginx -t`, затем reload. Роль `app` сначала загружает образ,
+только потом управляет контейнером и ожидает HTTP 200 с `status=ok`.
+
+В `group_vars/all.yml` закреплён образ
+`ghcr.io/firefly4ik/devops-ci-app:f5f78c61781f54a0bdd9e1202d5b81f2394945e3`.
+Контейнер `devops-ci-app` публикует только `127.0.0.1:5000:5000`, политика
+перезапуска — `unless-stopped`. Снаружи доступ идёт через Nginx:
+
+```bash
+curl -fsS http://192.168.56.101/
+curl -fsS http://192.168.56.101/health
+```
+
+Повторный `site.yml` должен завершаться с `changed=0`, `failed=0`.
+`verify.yml` только читает эффективную конфигурацию SSH, состояние контейнера
+и `/health`; успешный аудит также не меняет состояние.
+
+Учебный drift создаётся в консоли VM: удалить контейнер и заменить upstream
+5000 на 5001 в `/etc/nginx/sites-available/devops-ci-app`, проверить и
+перезагрузить Nginx. Ожидается 502. Восстановление — только `ansible-playbook
+site.yml`, после которого `/health` снова отвечает 200. Не исправляйте VM
+вручную между поломкой и восстановлением.
+
+Для опыта с отсутствующим образом временно задайте `app_tag` из сорока нулей
+без коммита. Ожидается ошибка задачи pull; ID существующего контейнера и
+health 200 должны сохраниться. Верните рабочий `group_vars/all.yml` из Git и
+повторите playbook. Для негативного аудита остановите контейнер в VM,
+проверьте отказ `verify.yml`, затем восстановите его через `site.yml`.
